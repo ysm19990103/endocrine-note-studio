@@ -1,5 +1,8 @@
 import { createCase, sanitize, FIELD_LABELS, validateCase, buildNotes, getGuidance, addUpdate, exportCase } from './engine.js';
 import { PROBLEMS, SOURCES } from './knowledge.js';
+import { PrivacyReview } from './privacy.js';
+
+const privacyReview=new PrivacyReview();
 
 const $ = id => document.getElementById(id);
 const make = (tag, className, text) => {const element=document.createElement(tag);if(className)element.className=className;if(text!==undefined)element.textContent=String(text);return element;};
@@ -21,29 +24,75 @@ function acceptEdit(input,previous,assign,max=80000,after=()=>{}){
  try{const text=clean(input.value);if(input.value.length>max||text.length>max)throw new Error(`去标识前后均不得超过 ${max.toLocaleString('en-US')} 字符；本次编辑未应用，之前内容已保留。`);assign(text);invalidate();after();}
  catch(error){input.value=previous;safeError(error);}
 }
-function invalidate(){if(currentCase)currentCase.confirmed=false;$('confirm-facts').checked=false;refreshPreview();}
+function invalidate(){privacyReview.reset();if(currentCase)currentCase.confirmed=false;$('confirm-facts').checked=false;refreshPreview();}
 function textSummary(value){return typeof value==='string'?value:Array.isArray(value)?value.join('；'):value==null?'':String(value);}
 function dateText(value){return String(value??'').replace('T',' ').replace(/Z$/,' UTC');}
 function safeError(error){toast(error?.message||'未能完成操作，请检查输入格式。');}
 function sourceLinks(ids){const box=make('div','citation-links');for(const id of ids??[]){const source=SOURCES.find(s=>s.id===id);if(!source||!/^https:\/\//.test(source.url??''))continue;const link=make('a','',`${source.title} · ${source.year}`);link.href=source.url;link.target='_blank';link.rel='noopener noreferrer';link.referrerPolicy='no-referrer';box.append(link);}return box;}
 function setView(view){currentView=view;for(const key of Object.keys(VIEW_NAMES))$(`${key}-view`).hidden=key!==view;document.querySelectorAll('[data-view]').forEach(button=>{const active=button.dataset.view===view;button.classList.toggle('active',active);if(active)button.setAttribute('aria-current','page');else button.removeAttribute('aria-current');});const [crumb,title,desc]=VIEW_NAMES[view];$('breadcrumb-current').textContent=crumb;$('page-title').textContent=title;$('page-description').textContent=desc;if(view==='followup')selectNote('followup');if(view==='checklist'){renderChecklist();selectNote('checklist');}if(view==='workspace'&&currentNote==='checklist')selectNote('initial');}
 function selectNote(note){currentNote=note;document.querySelectorAll('[data-note]').forEach(button=>{const active=button.dataset.note===note;button.classList.toggle('active',active);button.setAttribute('aria-selected',String(active));button.tabIndex=active?0:-1;});refreshPreview();}
-function canExport(){if(!currentCase||!currentCase.confirmed||rawDirty||termsDirty){toast('请先完成去标识并核查本次病例，再勾选预览下方的确认项。');return false;}const validated=validateCase(currentCase);if(!validated.ok){currentCase.confirmed=false;refreshPreview();safeError(new Error(validated.errors.join('；')));return false;}return true;}
+function canExport(){
+ try{
+  if(privacyReview.sync(currentCase)&&currentCase)currentCase.confirmed=false;
+  if(!currentCase||!currentCase.confirmed||rawDirty||termsDirty||!privacyReview.ready){refreshPreview();toast('请先处理每条隐私提示，再核查病例全文并勾选最终确认项。');return false;}
+  const validated=validateCase(currentCase);if(!validated.ok){currentCase.confirmed=false;refreshPreview();safeError(new Error(validated.errors.join('；')));return false;}
+  return true;
+ }catch{if(currentCase)currentCase.confirmed=false;document.body.classList.remove('privacy-ready');toast('隐私核查未完成，暂不能导出。请重新整理病例。');return false;}
+}
+
+function renderPrivacy(){
+ const box=$('privacy-findings');box.replaceChildren();
+ const report=privacyReview.report;
+ $('privacy-summary').textContent=report.total?`发现 ${report.overflow?'至少 ':''}${report.total} 处待核查片段，尚有 ${privacyReview.pending} 处未处理。`:'本地规则未发现疑似标识；仍须人工核查全文，不能保证完全匿名化。';
+ $('privacy-overflow').hidden=!report.overflow;
+ for(const f of report.findings){
+  const item=make('li','privacy-finding');
+  item.append(make('strong','',`${f.sourceLabel} · 第 ${f.line} 行，第 ${f.column} 列`));
+  const excerpt=make('p','privacy-excerpt');const source=report.sources.find(s=>s.id===f.sourceId);const from=Math.max(0,f.start-24),to=Math.min(source.text.length,f.end+24);
+  excerpt.append(document.createTextNode((from?'…':'')+source.text.slice(from,f.start)),make('mark','',f.text),document.createTextNode(source.text.slice(f.end,to)+(to<source.text.length?'…':'')));item.append(excerpt,make('p','field-help',f.hint));
+  const actions=make('div','privacy-actions');const locate=make('button','text-button','查看所在原文');locate.type='button';locate.addEventListener('click',()=>showPrivacySource(f));
+  const mask=make('button','text-button','补充屏蔽词');mask.type='button';mask.addEventListener('click',()=>{ $('privacy-mask-term').value=f.kind==='identity'?'':f.text;$('privacy-mask-context').textContent=`待核查片段：${f.text}`;$('privacy-mask-dialog').showModal();$('privacy-mask-term').focus(); });actions.append(locate,mask);item.append(actions);
+  const label=make('label','privacy-ack');const check=make('input');check.type='checkbox';check.checked=privacyReview.accepted.has(f.id);check.dataset.privacyId=f.id;
+  check.addEventListener('change',()=>{privacyReview.acknowledge(f.id,check.checked);currentCase.confirmed=false;refreshPreview();document.querySelector(`[data-privacy-id="${CSS.escape(f.id)}"]`)?.focus({preventScroll:true});});
+  label.append(check,make('span','','我已逐项核查，此片段可保留（如医学术语或必要临床事实）'));item.append(label);box.append(item);
+ }
+}
+function showPrivacySource(f){
+ const source=privacyReview.report.sources.find(s=>s.id===f.sourceId);if(!source)return;
+ $('privacy-source-title').textContent=`${source.label} · 第 ${f.line} 行，第 ${f.column} 列`;
+ const output=$('privacy-source-text');output.replaceChildren(document.createTextNode(source.text.slice(0,f.start)),make('mark','',source.text.slice(f.start,f.end)),document.createTextNode(source.text.slice(f.end)));
+ $('privacy-source-dialog').showModal();output.querySelector('mark').scrollIntoView({block:'center'});
+}
+function applyPrivacyTerms(newTerms){
+ const combined=[...new Set([...(currentCase.extraTerms??[]),...newTerms])];
+ const result=validateCase({...currentCase,extraTerms:combined});
+ if(!result.ok)throw new Error(result.errors.join('；'));
+ currentCase=result.value;currentCase.confirmed=false;termsDirty=false;privacyReview.reset();
+ $('admission-input').value=currentCase.admission;$('extra-terms').value='';
+ for(const id of ['update-subjective','update-objective','update-assessment','update-plan','custom-task'])$(id).value=clean($(id).value);
+ for(const input of $('lab-inputs').querySelectorAll('input[type="text"]'))input.value=clean(input.value);
+ updateInputCount();renderCase();
+}
+
 
 function refreshPreview(){
  const available=!!currentCase;
+ let privacyOK=false;
+ try{if(privacyReview.sync(currentCase)&&currentCase)currentCase.confirmed=false;renderPrivacy();privacyOK=privacyReview.ready;}catch{if(currentCase)currentCase.confirmed=false;$('privacy-summary').textContent='隐私检查未完成，导出已暂停；请重新整理病例。';$('privacy-findings').replaceChildren();}
  $('preview-empty').hidden=available;$('document-surface').hidden=!available;$('review-area').hidden=!available;$('guidance-panel').hidden=!available;
  $('step-review').classList.toggle('active',available);$('step-output').classList.toggle('active',!!currentCase?.confirmed&&!rawDirty&&!termsDirty);
  $('confirm-facts').checked=!!currentCase?.confirmed&&!rawDirty&&!termsDirty;
- $('confirm-facts').disabled=rawDirty||termsDirty;
+ $('confirm-facts').disabled=rawDirty||termsDirty||!privacyOK;
  $('apply-extra-terms').disabled=!available||!$('extra-terms').value.trim()||rawDirty;
- const ready=available&&currentCase.confirmed&&!rawDirty&&!termsDirty;
+ const ready=available&&currentCase.confirmed&&!rawDirty&&!termsDirty&&privacyOK;
+ document.body.classList.toggle('privacy-ready',!!ready);
+ $('print-output').textContent='';
  for(const id of ['copy-note','download-txt','download-html','print-note','export-case'])$(id).disabled=!ready;
  $('draft-status').textContent=!available?'待输入':rawDirty?'入院原文已修改':termsDirty?'补充去标识待应用':ready?'已核对 · 待核签':'草稿 · 待核对';
  $('draft-status').classList.toggle('ready',ready);
- $('review-hint').textContent=rawDirty?'入院原文已修改，请先重新点击“去标识并整理”。':termsDirty?'补充词表已修改，请先点击“应用补充去标识”。':'修改内容后需重新核查。';
+ $('review-hint').textContent=rawDirty?'入院原文已修改，请先重新点击“去标识并整理”。':termsDirty?'补充词表已修改，请先点击“应用补充去标识”。':!privacyOK?'请先逐项处理隐私提示，再核查全文并确认。':'修改内容后需重新核查。';
  if(!available){$('note-preview').textContent='';return;}
- try{$('note-preview').textContent=buildNotes(currentCase)[currentNote]??'';}catch(error){$('note-preview').textContent='暂时无法生成草稿，请核对输入。';safeError(error);}
+ try{$('note-preview').textContent=buildNotes(currentCase)[currentNote]??'';if(ready)$('print-output').textContent=$('note-preview').textContent;}catch(error){$('note-preview').textContent='暂时无法生成草稿，请核对输入。';safeError(error);}
  renderGuidance();
 }
 
@@ -106,7 +155,7 @@ function renderCase(){
 }
 function updateInputCount(){$('input-count').textContent=`${$('admission-input').value.length.toLocaleString('zh-CN')} 字`;}
 function discardCurrent(){return !currentCase||window.confirm('继续将清除当前页面的病例、随访及勾选状态。未导出的工作将丢失，是否继续？');}
-function clearCase(){if(!discardCurrent())return;currentCase=null;rawDirty=false;termsDirty=false;$('admission-input').value='';$('extra-terms').value='';$('update-form').reset();$('lab-inputs').replaceChildren();$('custom-task').value='';$('note-preview').textContent='';$('record-time').value='';for(const key of ['time','rank','findings','opinion'])$(`round-${key}`).value='';$('confirm-facts').checked=false;updateInputCount();renderCase();setView('workspace');selectNote('initial');toast('已清除当前病例。');}
+function clearCase(){if(!discardCurrent())return;currentCase=null;privacyReview.reset();rawDirty=false;termsDirty=false;$('admission-input').value='';$('extra-terms').value='';$('update-form').reset();$('lab-inputs').replaceChildren();$('custom-task').value='';$('note-preview').textContent='';$('record-time').value='';for(const key of ['time','rank','findings','opinion'])$(`round-${key}`).value='';$('confirm-facts').checked=false;updateInputCount();renderCase();setView('workspace');selectNote('initial');toast('已清除当前病例。');}
 
 function addLab(){
  if($('lab-inputs').children.length>=100){toast('每次最多添加100条检验。');return;}
@@ -122,9 +171,9 @@ function noteText(){return buildNotes(currentCase)[currentNote]??'';}
 function htmlDocument(text){return '<!doctype html><html lang="zh-CN"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta http-equiv="Content-Security-Policy" content="default-src \'none\'; style-src \'unsafe-inline\'; base-uri \'none\'; form-action \'none\'"><title>'+escapeHtml(NOTE_NAMES[currentNote])+'</title><style>body{max-width:760px;margin:40px auto;padding:0 24px;color:#000;background:white}pre{white-space:pre-wrap;overflow-wrap:anywhere;font-family:"Songti SC",SimSun,serif;font-size:15px;line-height:1.9}@media print{body{margin:0;padding:0}@page{size:A4;margin:20mm}}</style></head><body><pre>'+escapeHtml(text)+'</pre></body></html>';}
 
 $('prepare-case').addEventListener('click',()=>{
- try{if(currentCase&&!window.confirm('重新整理将替换当前病例，清除已编辑的事实、查房意见、随访、清单勾选及备注。未导出的工作将丢失，是否继续？'))return;const terms=$('extra-terms').value.split(/[,，\n]/).map(t=>t.trim()).filter(Boolean);currentCase=createCase($('admission-input').value,terms);$('admission-input').value=currentCase.admission;$('extra-terms').value='';rawDirty=false;termsDirty=false;$('update-form').reset();$('lab-inputs').replaceChildren();$('custom-task').value='';updateInputCount();renderCase();selectNote('initial');toast('已整理为草稿，请核查各字段及去标识结果。');$('facts-panel').scrollIntoView({behavior:'smooth',block:'start'});}catch(error){safeError(error);}
+ try{if(currentCase&&!window.confirm('重新整理将替换当前病例，清除已编辑的事实、查房意见、随访、清单勾选及备注。未导出的工作将丢失，是否继续？'))return;const terms=$('extra-terms').value.split(/[,，\n]/).map(t=>t.trim()).filter(Boolean);currentCase=createCase($('admission-input').value,terms);privacyReview.reset();$('admission-input').value=currentCase.admission;$('extra-terms').value='';rawDirty=false;termsDirty=false;$('update-form').reset();$('lab-inputs').replaceChildren();$('custom-task').value='';updateInputCount();renderCase();selectNote('initial');toast('已整理为草稿，请核查各字段及去标识结果。');$('facts-panel').scrollIntoView({behavior:'smooth',block:'start'});}catch(error){safeError(error);}
 });
-$('load-demo').addEventListener('click',()=>{if(!discardCurrent())return;currentCase=null;rawDirty=false;termsDirty=false;$('admission-input').value=DEMO;$('extra-terms').value='';$('update-form').reset();$('lab-inputs').replaceChildren();$('custom-task').value='';updateInputCount();renderCase();selectNote('initial');toast('已载入完全虚构的示例。点击“去标识并整理”开始。');});
+$('load-demo').addEventListener('click',()=>{if(!discardCurrent())return;currentCase=null;privacyReview.reset();rawDirty=false;termsDirty=false;$('admission-input').value=DEMO;$('extra-terms').value='';$('update-form').reset();$('lab-inputs').replaceChildren();$('custom-task').value='';updateInputCount();renderCase();selectNote('initial');toast('已载入完全虚构的示例。点击“去标识并整理”开始。');});
 $('clear-case').addEventListener('click',clearCase);
 $('admission-input').addEventListener('input',()=>{updateInputCount();if(currentCase){rawDirty=true;invalidate();}});
 $('extra-terms').addEventListener('input',()=>{termsDirty=!!currentCase&&!!$('extra-terms').value.trim();if(currentCase)invalidate();else refreshPreview();});
@@ -133,32 +182,25 @@ $('apply-extra-terms').addEventListener('click',()=>{
  const newTerms=$('extra-terms').value.split(/[,，\n]/).map(t=>t.trim()).filter(Boolean);
  if(!newTerms.length){termsDirty=false;refreshPreview();return;}
  try{
-  const combined=[...new Set([...(currentCase.extraTerms??[]),...newTerms])];
-  const result=validateCase({...currentCase,extraTerms:combined});
-  if(!result.ok)throw new Error(result.errors.join('；'));
-  currentCase=result.value;currentCase.confirmed=false;termsDirty=false;
-  $('admission-input').value=currentCase.admission;$('extra-terms').value='';
-  for(const id of ['update-subjective','update-objective','update-assessment','update-plan','custom-task'])$(id).value=clean($(id).value);
-  for(const input of $('lab-inputs').querySelectorAll('input[type="text"]'))input.value=clean(input.value);
-  updateInputCount();renderCase();toast('已应用补充去标识，随访已保留；文字改变的计划项会重置完成状态，请核查清单。');
+  applyPrivacyTerms(newTerms);toast('已应用补充去标识，随访已保留；文字改变的计划项会重置完成状态，请核查清单。');
  }catch(error){safeError(error);}
 });
 $('record-time').addEventListener('input',()=>{if(currentCase){currentCase.recordTime=$('record-time').value;invalidate();}});
 for(const key of ['time','rank','findings','opinion'])$(`round-${key}`).addEventListener('input',event=>{if(!currentCase)return;acceptEdit(event.target,currentCase.round[key],text=>{currentCase.round[key]=text;});});
 for(const key of ['findings','opinion'])$(`round-${key}`).addEventListener('blur',event=>{if(currentCase)event.target.value=currentCase.round[key];});
-$('confirm-facts').addEventListener('change',()=>{if(!currentCase||rawDirty||termsDirty)return;currentCase.confirmed=$('confirm-facts').checked;refreshPreview();});
+$('confirm-facts').addEventListener('change',()=>{if(!currentCase||rawDirty||termsDirty||!privacyReview.ready)return;currentCase.confirmed=$('confirm-facts').checked;refreshPreview();});
 document.querySelectorAll('[data-view]').forEach(button=>button.addEventListener('click',()=>setView(button.dataset.view)));
 document.querySelectorAll('[data-note]').forEach(button=>{button.addEventListener('click',()=>selectNote(button.dataset.note));button.addEventListener('keydown',event=>{if(!['ArrowLeft','ArrowRight','Home','End'].includes(event.key))return;event.preventDefault();const tabs=[...document.querySelectorAll('[data-note]')];const index=tabs.indexOf(button);const next=event.key==='Home'?0:event.key==='End'?tabs.length-1:(index+(event.key==='ArrowRight'?1:-1)+tabs.length)%tabs.length;selectNote(tabs[next].dataset.note);tabs[next].focus();});});
 $('add-lab').addEventListener('click',addLab);
-$('update-form').addEventListener('submit',event=>{event.preventDefault();if(!currentCase)return;if(rawDirty||termsDirty){toast('入院原文或补充去标识尚未应用，请先完成整理再补充随访。');return;}const update={time:$('update-time').value,subjective:$('update-subjective').value,objective:$('update-objective').value,assessment:$('update-assessment').value,plan:$('update-plan').value,labs:[...$('lab-inputs').children].map(card=>Object.fromEntries([...card.querySelectorAll('[data-lab-field]')].map(input=>[input.dataset.labField,input.value])))};try{currentCase=addUpdate(currentCase,update);$('update-form').reset();$('lab-inputs').replaceChildren();renderTimeline();renderChecklist();selectNote('followup');toast('已加入随访。请核对新草稿及新增结果的提示。');}catch(error){safeError(error);}});
+$('update-form').addEventListener('submit',event=>{event.preventDefault();if(!currentCase)return;if(rawDirty||termsDirty){toast('入院原文或补充去标识尚未应用，请先完成整理再补充随访。');return;}const update={time:$('update-time').value,subjective:$('update-subjective').value,objective:$('update-objective').value,assessment:$('update-assessment').value,plan:$('update-plan').value,labs:[...$('lab-inputs').children].map(card=>Object.fromEntries([...card.querySelectorAll('[data-lab-field]')].map(input=>[input.dataset.labField,input.value])))};try{currentCase=addUpdate(currentCase,update);privacyReview.reset();$('update-form').reset();$('lab-inputs').replaceChildren();renderTimeline();renderChecklist();selectNote('followup');toast('已加入随访。请核对新草稿及新增结果的提示。');}catch(error){safeError(error);}});
 $('custom-task-form').addEventListener('submit',event=>{event.preventDefault();if(!currentCase)return;const value=clean($('custom-task').value).trim();if(!value)return;if(value.length>2000){toast('去标识后的自定义事项超过 2,000 字符；本次未添加，输入保留。');return;}if(currentCase.customTasks.length>=100){toast('每个病例最多100条自定义事项。');return;}const id=`custom-${globalThis.crypto?.randomUUID?.()??Date.now()}`;currentCase.customTasks.push({id,text:value});$('custom-task').value='';invalidate();renderChecklist();});
-$('copy-note').addEventListener('click',async()=>{if(!canExport())return;try{await navigator.clipboard.writeText(noteText());toast('已复制当前病历正文。');}catch{toast('浏览器未允许复制，请下载 TXT，或在预览内选择文字复制。');}});
+$('copy-note').addEventListener('click',async()=>{if(!canExport())return;try{await navigator.clipboard.writeText(noteText());toast('已复制当前病历正文。');}catch{toast('浏览器未允许复制，请在完成核查后下载 TXT。');}});
 $('download-txt').addEventListener('click',()=>{if(canExport()){download(fileName('txt'),'text/plain;charset=utf-8','\uFEFF'+noteText());toast('已请求下载当前文书，请在浏览器下载列表确认文件。');}});
 $('download-html').addEventListener('click',()=>{if(canExport()){download(fileName('html'),'text/html;charset=utf-8',htmlDocument(noteText()));toast('已请求下载可打印文书，请在浏览器下载列表确认文件。');}});
-$('print-note').addEventListener('click',()=>{if(canExport()){document.body.classList.add('printing');window.print();document.body.classList.remove('printing');}});
+$('print-note').addEventListener('click',()=>{if(canExport())window.print();});
 $('export-case').addEventListener('click',()=>{if(!canExport())return;try{const exported=exportCase(currentCase);download(`内分泌病例工作_${new Date().toISOString().slice(0,10)}.json`,'application/json;charset=utf-8',JSON.stringify(exported,null,2));toast('已保存去标识后的病例工作文件。重新导入时需再次核查。');}catch(error){safeError(error);}});
 $('import-case').addEventListener('click',()=>$('import-file').click());
-$('import-file').addEventListener('change',async event=>{const file=event.target.files?.[0];if(!file)return;try{if(file.size>5*1024*1024)throw new Error('文件超过5 MB，请选择本应用导出的病例 JSON。');const parsed=JSON.parse(await file.text());const result=validateCase(parsed);if(!result.ok)throw new Error(result.errors.join('；'));if(!discardCurrent())return;currentCase=result.value;currentCase.confirmed=false;rawDirty=false;termsDirty=false;$('admission-input').value=currentCase.admission;$('extra-terms').value='';$('update-form').reset();$('lab-inputs').replaceChildren();$('custom-task').value='';updateInputCount();renderCase();setView('workspace');selectNote('initial');toast('已导入病例，请阅读字段上方的迁移提示，并重新核查去标识与事实。');}catch(error){safeError(error);}finally{event.target.value='';}});
+$('import-file').addEventListener('change',async event=>{const file=event.target.files?.[0];if(!file)return;try{if(file.size>5*1024*1024)throw new Error('文件超过5 MB，请选择本应用导出的病例 JSON。');const parsed=JSON.parse(await file.text());const result=validateCase(parsed);if(!result.ok)throw new Error(result.errors.join('；'));if(!discardCurrent())return;currentCase=result.value;privacyReview.reset();currentCase.confirmed=false;rawDirty=false;termsDirty=false;$('admission-input').value=currentCase.admission;$('extra-terms').value='';$('update-form').reset();$('lab-inputs').replaceChildren();$('custom-task').value='';updateInputCount();renderCase();setView('workspace');selectNote('initial');toast('已导入病例，请阅读字段上方的迁移提示，并重新核查去标识与事实。');}catch(error){safeError(error);}finally{event.target.value='';}});
 
 function showSources(){if(!$('sources-dialog').open)$('sources-dialog').showModal();}
 $('sources-open').addEventListener('click',showSources);$('guidance-sources').addEventListener('click',showSources);$('sources-close').addEventListener('click',()=>$('sources-dialog').close());
@@ -171,3 +213,24 @@ window.addEventListener('beforeunload',event=>{if(currentCase||$('admission-inpu
 if('serviceWorker'in navigator&&location.protocol!=='file:')navigator.serviceWorker.register('./sw.js',{scope:'./'}).catch(()=>{/* The application remains usable online if caching is unavailable. */});
 for(const input of document.querySelectorAll('textarea,input[type="text"]')){input.setAttribute('autocomplete','off');input.spellcheck=false;}
 renderCase();selectNote('initial');updateInputCount();
+
+$('privacy-source-close').addEventListener('click',()=>$('privacy-source-dialog').close());
+$('privacy-mask-close').addEventListener('click',()=>$('privacy-mask-dialog').close());
+for(const id of ['privacy-source-dialog','privacy-mask-dialog'])$(id).addEventListener('close',()=>{$('privacy-source-text').replaceChildren();$('privacy-mask-term').value='';$('privacy-mask-context').textContent='';});
+$('privacy-mask-apply').addEventListener('click',()=>{
+ if(!currentCase||rawDirty||termsDirty){toast('请先应用待处理的原文或词表编辑。');return;}
+ const term=$('privacy-mask-term').value.trim();if(!term||term==='[已移除]'){toast('请填写需要屏蔽的准确文字。');return;}
+ try{applyPrivacyTerms([term]);$('privacy-mask-dialog').close();toast('已屏蔽所填文字；请重新核查剩余提示与临床事实。');}catch(error){safeError(error);}
+});
+// Browser menu / keyboard printing must use the same gate as the app button.
+window.addEventListener('beforeprint',()=>{
+ const ready=canExport();document.body.classList.toggle('privacy-ready',ready);
+ $('print-output').textContent=ready?noteText():'';
+});
+// Native copying is gated too; a deliberate browser/OS capture cannot be prevented.
+function gateNativeClipboard(event){
+ const selection=window.getSelection(),preview=$('note-preview');
+ const inPreview=selection?.rangeCount===1&&preview.contains(selection.anchorNode)&&preview.contains(selection.focusNode)&&!['INPUT','TEXTAREA'].includes(document.activeElement?.tagName);
+ if(!inPreview||!canExport()){event.preventDefault();event.clipboardData?.setData('text/plain','');toast('原生复制仅允许已核查的预览正文；请处理隐私提示后使用“复制正文”。');}
+}
+for(const type of ['copy','cut'])document.addEventListener(type,gateNativeClipboard);
