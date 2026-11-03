@@ -1,0 +1,16 @@
+node_modules/
+.env
+.env.*
+!.env.example
+*.log
+*.docx
+*.pdf
+*.csv
+*.xlsx
+*.zip
+*.tar.gz
+upload/
+source_notes/
+patient-data/
+coverage/
+.DS_Store

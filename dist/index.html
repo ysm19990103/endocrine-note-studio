@@ -1,0 +1,67 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; connect-src 'self'; object-src 'none'; base-uri 'none'; form-action 'none'">
+  <meta name="referrer" content="no-referrer">
+  <meta name="theme-color" content="#164d3f">
+  <meta name="description" content="在浏览器本机整理内分泌科入院记录、首次病程和上级医师查房草稿，管理后续诊疗核对表与检验随访。">
+  <title>内分泌病历工作台</title>
+  <link rel="icon" href="./icon.svg" type="image/svg+xml">
+  <link rel="manifest" href="./manifest.webmanifest">
+  <link rel="stylesheet" href="./styles.css">
+  <script type="module" src="./app.js"></script>
+</head>
+<body>
+  <a class="skip-link" href="#main">跳到主要内容</a>
+  <aside class="sidebar" aria-label="主导航">
+    <a class="brand" href="./"><span class="brand-mark" aria-hidden="true">E<span>＋</span></span><span>内分泌病历<span class="brand-sub">ENDOCRINE NOTE STUDIO</span></span></a>
+    <div class="sidebar-label">临床书写</div>
+    <nav class="nav-list">
+      <button class="nav-item active" data-view="workspace" aria-current="page"><span class="nav-icon" aria-hidden="true">▤</span>病历工作台<span class="nav-arrow">↗</span></button>
+      <button class="nav-item" data-view="followup"><span class="nav-icon" aria-hidden="true">⌁</span>检验与随访<span class="nav-count" id="update-count">0</span></button>
+      <button class="nav-item" data-view="checklist"><span class="nav-icon" aria-hidden="true">☑</span>后续诊疗表<span class="nav-count" id="task-count">0</span></button>
+    </nav>
+    <div class="sidebar-label resources-label">工作资料</div>
+    <nav class="nav-list">
+      <button class="nav-item" id="sources-open"><span class="nav-icon" aria-hidden="true">▧</span>参考依据与边界</button>
+      <button class="nav-item" id="import-case"><span class="nav-icon" aria-hidden="true">↥</span>导入已保存病例</button>
+      <button class="nav-item" id="export-case" disabled><span class="nav-icon" aria-hidden="true">⇩</span>保存本次工作</button>
+      <button class="nav-item mobile-only" id="mobile-install"><span class="nav-icon" aria-hidden="true">⊕</span>安装到桌面</button>
+    </nav>
+    <div class="local-card"><span class="local-dot"></span><strong>数据留在此设备</strong><p>无需密钥，不上传病历。关闭页面后，未导出的内容将清除。</p><button class="text-button" id="install-app">安装到桌面 ↗</button></div>
+    <div class="sidebar-bottom"><span>版本 1.0.1</span><span>专注于每一份病历</span></div>
+  </aside>
+  <div class="app-shell">
+    <header class="topbar"><div class="breadcrumb">临床书写 <span>/</span> <strong id="breadcrumb-current">病历工作台</strong></div><div class="top-status"><span class="local-dot"></span>本机处理 <span class="top-separator">·</span> 不联网生成 <span class="top-separator">·</span> 草稿需核签</div></header>
+    <main id="main">
+      <div class="page-heading"><div><div class="eyebrow">CLINICAL DOCUMENTATION</div><h1 id="page-title">从入院信息，到规范病程。</h1><p id="page-description">整理事实、核对依据，让诊疗记录有据可循。</p></div><button class="secondary-button" id="clear-case"><span aria-hidden="true">＋</span> 新建病例</button></div>
+      <div class="workflow" aria-label="书写步骤"><div class="workflow-step active" id="step-input"><span>01</span><div><strong>输入与去标识</strong><small>整理入院记录</small></div></div><div class="workflow-line"></div><div class="workflow-step" id="step-review"><span>02</span><div><strong>核对病例事实</strong><small>确认信息与诊疗问题</small></div></div><div class="workflow-line"></div><div class="workflow-step" id="step-output"><span>03</span><div><strong>生成并核签</strong><small>导出病程与诊疗表</small></div></div></div>
+      <div class="workspace-grid">
+        <div class="editor-column">
+          <section id="workspace-view" class="view-section">
+            <section class="panel input-panel"><div class="panel-heading"><div><span class="section-number">01</span><h2>入院记录</h2></div><button class="text-button" id="load-demo">试用虚构示例 ↗</button></div><p class="panel-intro">粘贴本次患者的入院信息，保留原有标题、阴性病史和检验单位。</p><label class="sr-only" for="admission-input">患者入院记录</label><textarea id="admission-input" class="admission-text" placeholder="主诉：…&#10;现病史：…&#10;既往史：…&#10;过敏史：…&#10;体格检查：…&#10;辅助检查：…&#10;初步诊断：…&#10;诊疗计划：…" maxlength="80000" spellcheck="false"></textarea><div class="input-meta"><span id="input-count">0 字</span><span>仅使用本次提供的信息</span></div><details class="redaction-details"><summary>补充需移除的姓名或标识词</summary><label for="extra-terms">用逗号或换行分隔；累计最多 200 个不同词，每词最多 200 字符。无明确姓名标签的医师姓名及其他自由叙述标识请加入此表。</label><textarea id="extra-terms" rows="2" placeholder="填写需要完全移除的词，不会被保存"></textarea><button class="secondary-button" id="apply-extra-terms" type="button" disabled>应用补充去标识</button><p class="field-help">再次去标识会保留随访；文字改变的计划项需重新核查完成状态。</p></details><div class="privacy-note"><span aria-hidden="true">◇</span><p>自动识别不能保证去除全部个人信息。请在下一步逐项核查，不要保留姓名、证件号、住院号及联系方式。</p></div><button class="primary-button full-width" id="prepare-case">去标识并整理 <span aria-hidden="true">→</span></button></section>
+            <section class="panel" id="facts-panel" hidden><div class="panel-heading"><div><span class="section-number">02</span><h2>核对病例事实</h2></div><span class="badge" id="redaction-count">已整理</span></div><p class="panel-intro">以下内容来自本次输入。请按临床重要性精炼病例特点、修正分段；缺失项可留空，不要把“待排”或家族史改为确诊。</p><div id="parse-warnings" class="warning-list"></div><label class="record-time-label">首次记录时间<input type="datetime-local" step="0.001" id="record-time"><span class="field-help">全部临床时间使用患者就诊地本地时间，不自动转换时区。留空时待填写，不以应用创建时间代替。</span></label><div id="fact-fields" class="field-stack"></div><details class="source-admission"><summary>查看去标识后的完整入院记录</summary><pre id="sanitized-admission"></pre></details><div class="subsection-heading"><h3>本次需要关注的临床问题</h3><span>由您选择</span></div><p class="field-help">选中后提供鉴别思路及诊疗核对项，不会自动确诊。</p><div id="problem-options" class="problem-options"></div></section>
+            <section class="panel" id="round-panel" hidden><div class="panel-heading"><div><span class="section-number">＋</span><h2>补充查房信息</h2></div><span class="subtle-label">用于上级医师查房记录</span></div><div class="two-fields"><label>查房时间<input type="datetime-local" step="0.001" id="round-time"></label><label>医师职级<select id="round-rank"><option value="">待填写</option><option value="主治医师">主治医师</option><option value="副主任医师">副主任医师</option><option value="主任医师">主任医师</option></select></label></div><label>本次查房所见<textarea id="round-findings" maxlength="80000" rows="3" placeholder="填写实际症状变化、查体及需要说明的新结果"></textarea></label><label>上级医师实际意见<textarea id="round-opinion" maxlength="80000" rows="3" placeholder="仅填写实际获得的意见；留空时保持待填写，不代拟指示"></textarea></label></section>
+          </section>
+          <section id="followup-view" class="view-section" hidden>
+            <section class="panel"><div class="panel-heading"><div><span class="section-number">＋</span><h2>新增检验与病情进展</h2></div><span class="badge">保留时间顺序</span></div><p class="panel-intro">录入新结果，补充当次判断及计划。系统将区分原入院资料与后续信息。</p><div id="followup-empty" class="inline-empty">请先在病历工作台整理一份入院记录。</div><form id="update-form"><label>本次记录时间<input id="update-time" type="datetime-local" step="0.001" required></label><div class="two-fields"><label>症状与变化<textarea id="update-subjective" maxlength="80000" rows="3" placeholder="患者主诉及变化"></textarea></label><label>查体及其他客观结果<textarea id="update-objective" maxlength="80000" rows="3" placeholder="实际查体、影像等"></textarea></label></div><div class="subsection-heading"><h3>检验结果</h3><button type="button" class="text-button" id="add-lab">＋ 添加一项</button></div><div id="lab-inputs"></div><p class="field-help">按原报告填写实际采样时间，不自动沿用记录时间。全部时间采用患者就诊地本地时间；不同单位的结果不直接比较。</p><label>本次诊断判断及鉴别<textarea id="update-assessment" maxlength="80000" rows="3" placeholder="填写您基于新证据的判断，保留不确定性"></textarea></label><label>本次诊疗计划<textarea id="update-plan" maxlength="80000" rows="3" placeholder="填写拟进一步核实、监测或处理的事项"></textarea></label><button type="submit" class="primary-button full-width">加入随访记录 <span aria-hidden="true">→</span></button></form></section>
+            <section class="panel"><div class="panel-heading"><div><span class="section-number">↳</span><h2>随访时间线</h2></div><span class="subtle-label" id="timeline-count">尚无记录</span></div><div id="update-timeline" class="timeline"><div class="inline-empty">新增的结果与记录将在此保留。</div></div></section>
+          </section>
+          <section id="checklist-view" class="view-section" hidden>
+            <section class="panel"><div class="panel-heading"><div><span class="section-number">✓</span><h2>后续诊疗核对表</h2></div><span class="badge" id="checklist-progress">0 / 0</span></div><p class="panel-intro">原文计划整段保留，以保留否定与前提；可另行添加经确认的独立事项。勾选仅表示核对状态，不代表医嘱已开立或已执行。</p><div class="progress-track"><div id="checklist-bar"></div></div><div id="checklist-items"></div><form id="custom-task-form" class="custom-task"><label class="sr-only" for="custom-task">自定义诊疗核对项</label><input id="custom-task" placeholder="增加一项本次患者的诊疗事项（最多 2,000 字符）" maxlength="2000"><button class="secondary-button" type="submit">添加</button></form></section>
+          </section>
+        </div>
+        <div class="preview-column"><section class="panel preview-panel"><div class="panel-heading preview-heading"><div><span class="preview-dot"></span><h2>病历预览</h2></div><span class="draft-badge" id="draft-status">待输入</span></div><div class="document-tabs" role="tablist" aria-label="文书类型"><button class="document-tab active" role="tab" aria-selected="true" data-note="initial">首次病程</button><button class="document-tab" role="tab" aria-selected="false" data-note="round">上级查房</button><button class="document-tab" role="tab" aria-selected="false" data-note="followup">后续病程</button><button class="document-tab" role="tab" aria-selected="false" data-note="checklist">诊疗表</button></div><div id="preview-empty" class="preview-empty"><div class="paper-illustration" aria-hidden="true"><span>病程记录</span><i></i><i></i><i></i><i></i><b>＋</b></div><h3>让每一句记录都有来源</h3><p>整理入院记录后，这里会显示病历草稿。<br>未提供的事实不会被补成“正常”。</p><div class="empty-features"><span>事实整理</span><span>鉴别思路</span><span>诊疗核对</span></div></div><div id="document-surface" class="document-surface" hidden><div class="document-kicker">ENDOCRINOLOGY / CLINICAL DRAFT</div><pre id="note-preview" tabindex="0" aria-label="当前病历草稿"></pre></div><div class="review-area" id="review-area" hidden><label class="review-check"><input type="checkbox" id="confirm-facts"><span>我已核查去标识结果与病例事实，确认无参考资料中的个人信息混入；本草稿仍须临床审核与签署。</span></label><p id="review-hint">修改内容后需重新核查。</p></div><div class="export-toolbar"><button id="copy-note" class="secondary-button" disabled>复制正文</button><div class="export-actions"><button id="download-txt" class="icon-button" title="下载 TXT" aria-label="下载 TXT" disabled>TXT ↓</button><button id="download-html" class="icon-button" title="下载可打印 HTML" aria-label="下载可打印 HTML" disabled>HTML ↓</button><button id="print-note" class="icon-button" title="打印当前病历" aria-label="打印当前病历" disabled>打印</button></div></div><p class="download-note">导出文件含病例内容，请仅保存至获准使用的设备。</p></section><section class="panel guidance-panel" id="guidance-panel" hidden><div class="panel-heading"><div><span class="section-number">↗</span><h2>诊断与诊疗提示</h2></div><button class="text-button" id="guidance-sources">查看依据</button></div><p class="panel-intro">用于核对与补充证据，不构成患者的确定诊断或自动处方。此工具不识别全部危急值；急危症需直接床旁评估。</p><div id="clinical-alerts"></div><div id="differential-items"></div></section><div class="privacy-footer"><span aria-hidden="true">◇</span> 参考材料只用于抽象结构，原始病例与个人标识不随应用发布。</div></div>
+      </div>
+      <footer class="main-footer"><span>内分泌病历工作台</span><span>临床事实由您核实，诊疗决策由医疗团队完成。</span></footer>
+    </main>
+  </div>
+  <dialog id="sources-dialog"><div class="dialog-heading"><div class="eyebrow">REFERENCE & SCOPE</div><button class="icon-button" id="sources-close" aria-label="关闭参考依据">×</button></div><h2>参考依据与使用边界</h2><p>上传资料用于提炼记录结构和核对要点，不作为自动诊疗指令。早期教材、试验阈值和药物方案须结合当前指南、本地检验方法与实际病情核实。</p><div class="boundary-box"><strong>书写约定</strong><p>采用规则整理与结构化模板，不调用大模型；长篇病史与复杂鉴别仍需人工精炼。</p><p>原始资料、临床判断与建议分开呈现。缺失事实留空或标记未提供。查房所见和上级意见必须由用户实际填写；不生成医师姓名、签名或虚构查房事实。</p><strong>本机运行</strong><p>病例默认仅在当前页面内存中。浏览器刷新或关闭会清除未导出工作。桌面安装只缓存应用文件；不会自动保存病例。</p></div><div id="source-list"></div><p class="field-help">文献链接在新标签页打开；点击链接会访问外部网站，不会随链接发送病例正文。</p></dialog>
+  <dialog id="install-dialog"><div class="dialog-heading"><h2>安装到桌面</h2><button class="icon-button" id="install-close" aria-label="关闭安装说明">×</button></div><p>在支持的网站安装功能的浏览器中，使用地址栏的“安装”按钮。Safari 可通过“文件 → 添加到程序坞”；iPhone / iPad 可用“分享 → 添加到主屏幕”。</p><p>安装后仍在本机处理病例。首次访问需联网加载应用；离线可用性取决于浏览器是否已完成应用缓存。</p></dialog>
+  <input id="import-file" type="file" accept="application/json,.json" hidden>
+  <div id="toast" role="status" aria-live="polite"></div>
+  <noscript><div class="noscript">请启用 JavaScript 后使用本应用。病例整理在浏览器本机完成。</div></noscript>
+</body>
+</html>
