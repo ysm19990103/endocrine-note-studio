@@ -7,7 +7,13 @@ const raw='一般情况：女，44岁。\n主诉：心悸2个月。\n现病史�
 const terms=['林星禾','林月澄','周云舟','LAB-A7/260031'];
 const controls=['copy-note','download-txt','download-html','print-note','export-case'];
 async function prepare(page,text=raw){await page.locator('#admission-input').fill(text);await page.locator('#prepare-case').click();await expect(page.locator('#review-area')).toBeVisible();}
-async function acknowledge(page){while(await page.locator('[data-privacy-id]:not(:checked)').count())await page.locator('[data-privacy-id]:not(:checked)').first().check();}
+async function acknowledge(page){
+ while(await page.locator('[data-privacy-id]:not(:checked)').count()){
+  // Bind the decision to this finding; a dynamic :not(:checked) selector moves after rendering.
+  const id=await page.locator('[data-privacy-id]:not(:checked)').first().getAttribute('data-privacy-id');
+  const item=page.locator(`[data-privacy-id="${id}"]`);await item.check();await expect(item).toBeChecked();
+ }
+}
 async function mask(page,items=terms){await page.locator('.redaction-details').evaluate(el=>el.open=true);await page.locator('#extra-terms').fill(items.join('\n'));await page.locator('#apply-extra-terms').click();}
 async function confirm(page){await acknowledge(page);await page.locator('#confirm-facts').check();}
 async function download(page,id){const done=page.waitForEvent('download');await page.locator('#'+id).click();const d=await done;return readFile(await d.path(),'utf8');}
